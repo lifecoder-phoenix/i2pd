@@ -1,3 +1,5 @@
+#include <time.h>
+#include <stdio.h>
 #include <inttypes.h>
 #include <string.h>
 #include <chrono>
@@ -36,7 +38,6 @@ namespace util
 		return std::chrono::duration_cast<std::chrono::seconds>(
 				 std::chrono::system_clock::now().time_since_epoch()).count ();
 	}
-
 
 	static int64_t g_TimeOffset = 0; // in seconds
 
@@ -177,6 +178,25 @@ namespace util
 	uint64_t GetSecondsSinceEpoch ()
 	{
 		return GetLocalSecondsSinceEpoch () + g_TimeOffset;
+	}
+
+	void GetCurrentDate (char * date)
+	{
+		GetDateString (GetSecondsSinceEpoch (), date);
+	}
+
+	void GetDateString (uint64_t timestamp, char * date)
+	{
+		using clock = std::chrono::system_clock;
+		auto t = clock::to_time_t (clock::time_point (std::chrono::seconds(timestamp)));
+		struct tm tm;
+#ifdef _WIN32
+		gmtime_s(&tm, &t);
+		sprintf_s(date, 9, "%04i%02i%02i", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+#else
+		gmtime_r(&t, &tm);
+		sprintf(date, "%04i%02i%02i", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+#endif
 	}
 }
 }

@@ -58,7 +58,7 @@ namespace config {
 			("floodfill", bool_switch()->default_value(false),                "Router will be floodfill (default: disabled)")
 			("bandwidth", value<std::string>()->default_value(""),            "Bandwidth limit: integer in KBps or letters: L (32), O (256), P (2048), X (>9000)")
 			("share", value<int>()->default_value(100),                       "Limit of transit traffic from max bandwidth in percents. (default: 100)")
-			("ntcp", value<bool>()->default_value(true),                      "Enable NTCP transport (default: enabled)")
+			("ntcp", value<bool>()->default_value(false),                      "Enable NTCP transport (default: disabled)")
 			("ssu", value<bool>()->default_value(true),                       "Enable SSU transport (default: enabled)")
 			("ntcpproxy", value<std::string>()->default_value(""),            "Proxy URL for NTCP transport")
 #ifdef _WIN32
@@ -73,7 +73,7 @@ namespace config {
 			("limits.coresize", value<uint32_t>()->default_value(0),          "Maximum size of corefile in Kb (0 - use system limit)")
 			("limits.openfiles", value<uint16_t>()->default_value(0),         "Maximum number of open files (0 - use system default)")
 			("limits.transittunnels", value<uint16_t>()->default_value(2500), "Maximum active transit sessions (default:2500)")
-			("limits.ntcpsoft", value<uint16_t>()->default_value(0),          "Threshold to start probabalistic backoff with ntcp sessions (default: use system limit)")
+			("limits.ntcpsoft", value<uint16_t>()->default_value(0),          "Threshold to start probabilistic backoff with ntcp sessions (default: use system limit)")
 			("limits.ntcphard", value<uint16_t>()->default_value(0),          "Maximum number of ntcp sessions (default: use system limit)")
 			("limits.ntcpthreads", value<uint16_t>()->default_value(1),       "Maximum number of threads used by NTCP DH worker (default: 1)")
 		;
@@ -153,8 +153,8 @@ namespace config {
 			("i2pcontrol.address", value<std::string>()->default_value("127.0.0.1"),       "I2PCP listen address")
 			("i2pcontrol.port", value<uint16_t>()->default_value(7650),                    "I2PCP listen port")
 			("i2pcontrol.password", value<std::string>()->default_value("itoopie"),        "I2PCP access password")
-			("i2pcontrol.cert", value<std::string>()->default_value("i2pcontrol.crt.pem"), "I2PCP connection cerificate")
-			("i2pcontrol.key", value<std::string>()->default_value("i2pcontrol.key.pem"),  "I2PCP connection cerificate key")
+			("i2pcontrol.cert", value<std::string>()->default_value("i2pcontrol.crt.pem"), "I2PCP connection certificate")
+			("i2pcontrol.key", value<std::string>()->default_value("i2pcontrol.key.pem"),  "I2PCP connection certificate key")
 		;
 
 		bool upnp_default = false;
@@ -164,7 +164,7 @@ namespace config {
 		options_description upnp("UPnP options");
 		upnp.add_options()
 			("upnp.enabled", value<bool>()->default_value(upnp_default), "Enable or disable UPnP: automatic port forwarding")
-			("upnp.name", value<std::string>()->default_value("I2Pd"),   "Name i2pd appears in UPnP forwardings list")
+			("upnp.name", value<std::string>()->default_value("I2Pd"),   "Name i2pd appears in UPnP forwarding list")
 		;
 
 		options_description precomputation("Precomputation options");
@@ -195,10 +195,8 @@ namespace config {
 				"https://reseed.i2p.net.in/,"
 				"https://download.xxlspeed.com/,"
 				"https://reseed-fr.i2pd.xyz/,"
-				"https://reseed.atomike.ninja/,"
 				"https://reseed.memcpy.io/,"
 				"https://reseed.onion.im/,"
-				"https://itoopie.atomike.ninja/,"
 				"https://i2pseed.creativecowpat.net:8443/,"
                 "https://i2p.novg.net/"
 			),                                                            "Reseed URLs, separated by comma")
@@ -237,8 +235,9 @@ namespace config {
 		options_description ntcp2("NTCP2 Options");
 		ntcp2.add_options()
 			("ntcp2.enabled", value<bool>()->default_value(true), "Enable NTCP2 (default: enabled)")
-			("ntcp2.published", value<bool>()->default_value(false), "Publish NTCP2 (default: disabled)")
+			("ntcp2.published", value<bool>()->default_value(true), "Publish NTCP2 (default: enabled)")
 			("ntcp2.port", value<uint16_t>()->default_value(0), "Port to listen for incoming NTCP2 connections (default: auto)")
+			("ntcp2.addressv6", value<std::string>()->default_value("::"), "Address to bind NTCP2 on")
 		;
 
 		options_description nettime("Time sync options");
@@ -256,6 +255,7 @@ namespace config {
 		options_description persist("Network information persisting options");
 		persist.add_options()
 			("persist.profiles", value<bool>()->default_value(true), "Persist peer profiles (default: true)")
+			("persist.addressbook", value<bool>()->default_value(true), "Persist full addresses (default: true)")
 		;
 
 		m_OptionsDesc

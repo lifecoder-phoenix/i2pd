@@ -300,10 +300,22 @@ namespace data
 	bool NetDb::AddLeaseSet2 (const IdentHash& ident, const uint8_t * buf, int len, uint8_t storeType)
 	{
 		std::unique_lock<std::mutex> lock(m_LeaseSetsMutex);
-		// always new LS2 for now. TODO: implement update
 		auto leaseSet = std::make_shared<LeaseSet2> (storeType, buf, len, false); // we don't need leases in netdb
-		m_LeaseSets[ident] = leaseSet;
-		return true;
+		if (leaseSet->IsValid ())
+		{
+			auto it = m_LeaseSets.find(ident);
+			if (it == m_LeaseSets.end () || it->second->GetStoreType () != storeType ||
+				leaseSet->GetPublishedTimestamp () > it->second->GetPublishedTimestamp ())
+			{
+				// TODO: implement actual update
+				LogPrint (eLogInfo, "NetDb: LeaseSet2 updated: ", ident.ToBase32());
+				m_LeaseSets[ident] = leaseSet;
+				return true;
+			}
+		}
+		else
+			LogPrint (eLogError, "NetDb: new LeaseSet2 validation failed: ", ident.ToBase32());
+		return false;
 	}
 
 	std::shared_ptr<RouterInfo> NetDb::FindRouter (const IdentHash& ident) const
@@ -364,7 +376,7 @@ namespace data
 				}
 				m_FloodfillBootstrap = ri;
 				ReseedFromFloodfill(*ri);
-				// don't try reseed servers if trying to boostrap from floodfill
+				// don't try reseed servers if trying to bootstrap from floodfill
 				return;
 			}
 		}
@@ -686,14 +698,14 @@ namespace data
 			LogPrint (eLogDebug, "NetDb: store request: RouterInfo");
 			size_t size = bufbe16toh (buf + offset);
 			offset += 2;
-			if (size > 2048 || size > len - offset)
+			if (size > MAX_RI_BUFFER_SIZE || size > len - offset)
 			{
 				LogPrint (eLogError, "NetDb: invalid RouterInfo length ", (int)size);
 				return;
 			}
-			uint8_t uncompressed[2048];
-			size_t uncompressedSize = m_Inflator.Inflate (buf + offset, size, uncompressed, 2048);
-			if (uncompressedSize && uncompressedSize < 2048)
+			uint8_t uncompressed[MAX_RI_BUFFER_SIZE];
+			size_t uncompressedSize = m_Inflator.Inflate (buf + offset, size, uncompressed, MAX_RI_BUFFER_SIZE);
+			if (uncompressedSize && uncompressedSize < MAX_RI_BUFFER_SIZE)
 				updated = AddRouterInfo (ident, uncompressed, uncompressedSize);
 			else
 			{
@@ -1064,6 +1076,15 @@ namespace data
 			});
 	}
 
+	std::shared_ptr<const RouterInfo> NetDb::GetRandomSSUV6Router () const
+	{
+		return GetRandomRouter (
+			[](std::shared_ptr<const RouterInfo> router)->bool
+			{
+				return !router->IsHidden () && router->IsSSUV6 ();
+			});
+	}		
+
 	std::shared_ptr<const RouterInfo> NetDb::GetRandomIntroducer () const
 	{
 		return GetRandomRouter (
@@ -1231,7 +1252,7 @@ namespace data
 		{
 			if (!it->second->IsValid () || ts > it->second->GetExpirationTime () - LEASE_ENDDATE_THRESHOLD)
 			{
-				LogPrint (eLogInfo, "NetDb: LeaseSet ", it->second->GetIdentHash ().ToBase64 (), " expired or invalid");
+				LogPrint (eLogInfo, "NetDb: LeaseSet ", it->first.ToBase64 (), " expired or invalid");
 				it = m_LeaseSets.erase (it);
 			}
 			else

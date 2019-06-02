@@ -2,18 +2,18 @@ package org.purplei2p.i2pd;
 
 import java.util.HashSet;
 import java.util.Set;
+import android.os.Environment;
 import android.util.Log;
+
 import org.purplei2p.i2pd.R;
 
 public class DaemonSingleton {
-	private static final String TAG="i2pd";
+	private static final String TAG = "i2pd";
 	private static final DaemonSingleton instance = new DaemonSingleton();
 	public interface StateUpdateListener { void daemonStateUpdate(); }
 	private final Set<StateUpdateListener> stateUpdateListeners = new HashSet<>();
 
-	public static DaemonSingleton getInstance() {
-		return instance;
-	}
+	public static DaemonSingleton getInstance() { return instance; }
 
 	public synchronized void addStateChangeListener(StateUpdateListener listener) { stateUpdateListeners.add(listener); }
 	public synchronized void removeStateChangeListener(StateUpdateListener listener) { stateUpdateListeners.remove(listener); }
@@ -82,6 +82,7 @@ public class DaemonSingleton {
 				}
 				try {
 					synchronized (DaemonSingleton.this) {
+						I2PD_JNI.setDataDir(Environment.getExternalStorageDirectory().getAbsolutePath() + "/i2pd");
 						daemonStartResult = I2PD_JNI.startDaemon();
 						if("ok".equals(daemonStartResult)){
 							setState(State.startedOkay);
@@ -91,7 +92,6 @@ public class DaemonSingleton {
 				} catch (Throwable tr) {
 					lastThrowable=tr;
 					setState(State.startFailed);
-					return;
 				}
 			}
 

@@ -690,7 +690,7 @@ namespace transport
 					}
 					if (memcmp (addr->ntcp2->staticKey, m_Establisher->m_RemoteStaticKey, 32))
 					{
-						LogPrint (eLogError, "NTCP2: Static key mistmatch in SessionConfirmed");				
+						LogPrint (eLogError, "NTCP2: Static key mismatch in SessionConfirmed");				
 						SendTerminationAndTerminate (eNTCP2IncorrectSParameter);				
 						return;
 					}
@@ -783,7 +783,7 @@ namespace transport
 				size_t moreBytes = m_Socket.available(ec);
 				if (!ec && moreBytes >= m_NextReceivedLen)
 				{
-					// read and process messsage immediately if avaliable
+					// read and process message immediately if available
 					moreBytes = boost::asio::read (m_Socket, boost::asio::buffer(m_NextReceivedBuffer, m_NextReceivedLen), boost::asio::transfer_all (), ec);
 					HandleReceived (ec, moreBytes);
 				}
@@ -887,7 +887,7 @@ namespace transport
 						Terminate ();
 					}
 					else
-						LogPrint (eLogWarning, "NTCP2: Unexpected temination block size ", size);
+						LogPrint (eLogWarning, "NTCP2: Unexpected termination block size ", size);
 				break;
 				case eNTCP2BlkPadding:
 					LogPrint (eLogDebug, "NTCP2: padding");
@@ -935,7 +935,7 @@ namespace transport
 			htobe16buf (buf + 1, len); // size
 			len += 3; 	
 			totalLen += len;		
-			encryptBufs.push_back (std::make_pair (buf, len));
+			encryptBufs.push_back ( {buf, len} );
 			if (&it == &msgs.front ()) // first message
 			{
 				// allocate two bytes for length
@@ -949,7 +949,7 @@ namespace transport
 				auto paddingLen = CreatePaddingBlock (totalLen, buf + len, it->maxLen - it->len - 16);
 				if (paddingLen)
 				{
-					encryptBufs.push_back (std::make_pair (buf + len, paddingLen));
+					encryptBufs.push_back ( {buf + len, paddingLen} );
 					len += paddingLen;
 					totalLen += paddingLen;
 				}
@@ -969,7 +969,7 @@ namespace transport
 			auto paddingLen = CreatePaddingBlock (totalLen, m_NextSendBuffer, 287 - 16);
 			// and padding block to encrypt and send
 			if (paddingLen)
-				encryptBufs.push_back (std::make_pair (m_NextSendBuffer, paddingLen));			
+				encryptBufs.push_back ( {m_NextSendBuffer, paddingLen} );			
 			bufs.push_back (boost::asio::buffer (m_NextSendBuffer, paddingLen + 16));
 			macBuf = m_NextSendBuffer + paddingLen;
 			totalLen += paddingLen;		
@@ -1001,7 +1001,7 @@ namespace transport
 		// encrypt
 		uint8_t nonce[12];
 		CreateNonce (m_SendSequenceNumber, nonce); m_SendSequenceNumber++;
-		i2p::crypto::AEADChaCha20Poly1305Encrypt ({std::make_pair (m_NextSendBuffer + 2, payloadLen)}, m_SendKey, nonce, m_NextSendBuffer + payloadLen + 2);	
+		i2p::crypto::AEADChaCha20Poly1305Encrypt ({ {m_NextSendBuffer + 2, payloadLen} }, m_SendKey, nonce, m_NextSendBuffer + payloadLen + 2);	
 		SetNextSentFrameLength (payloadLen + 16, m_NextSendBuffer);
 		// send
 		m_IsSending = true;	
@@ -1180,6 +1180,7 @@ namespace transport
 						{
 							m_NTCP2V6Acceptor->open (boost::asio::ip::tcp::v6());
 							m_NTCP2V6Acceptor->set_option (boost::asio::ip::v6_only (true));
+							m_NTCP2V6Acceptor->set_option (boost::asio::socket_base::reuse_address (true));
 							m_NTCP2V6Acceptor->bind (boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), address->port));
 							m_NTCP2V6Acceptor->listen ();
 
@@ -1303,8 +1304,6 @@ namespace transport
 		else
 		{
 			LogPrint (eLogDebug, "NTCP2: Connected to ", conn->GetSocket ().remote_endpoint ());
-			if (conn->GetSocket ().local_endpoint ().protocol () == boost::asio::ip::tcp::v6()) // ipv6
-				context.UpdateNTCP2V6Address (conn->GetSocket ().local_endpoint ().address ());
 			conn->ClientLogin ();
 		}
 	}

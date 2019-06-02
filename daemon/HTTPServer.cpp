@@ -354,11 +354,19 @@ namespace http {
 	{
 		s << "<b>Base64:</b><br>\r\n<textarea readonly=\"readonly\" cols=\"64\" rows=\"11\" wrap=\"on\">";
 		s << dest->GetIdentity ()->ToBase64 () << "</textarea><br>\r\n<br>\r\n";
+		if (dest->IsEncryptedLeaseSet ())
+		{
+			i2p::data::BlindedPublicKey blinded (dest->GetIdentity ());
+			s << "<div class='slide'><label for='slide-b33'><b>Encrypted B33 address:</b></label>\r\n<input type='checkbox' id='slide-b33'/>\r\n<p class='content'>\r\n";
+			s << blinded.ToB33 () << ".b32.i2p<br>\r\n";
+			s << "</p>\r\n</div>\r\n";
+		}
+
 		if(dest->GetNumRemoteLeaseSets())
 		{
 			s << "<div class='slide'><label for='slide-lease'><b>LeaseSets:</b> <i>" << dest->GetNumRemoteLeaseSets () << "</i></label>\r\n<input type='checkbox' id='slide-lease'/>\r\n<p class='content'>\r\n";
 			for(auto& it: dest->GetLeaseSets ())
-				s << it.second->GetIdentHash ().ToBase32 () << " " << (int)it.second->GetStoreType () << "<br>\r\n";
+				s << it.first.ToBase32 () << " " << (int)it.second->GetStoreType () << "<br>\r\n";
 			s << "</p>\r\n</div>\r\n";
 		} else
 			s << "<b>LeaseSets:</b> <i>0</i><br>\r\n";
@@ -798,8 +806,7 @@ namespace http {
 	}
 
 	HTTPConnection::HTTPConnection (std::string hostname, std::shared_ptr<boost::asio::ip::tcp::socket> socket):
-		m_Socket (socket), m_Timer (socket->get_io_service ()), m_BufferLen (0),
-		expected_host(hostname)
+		m_Socket (socket), m_BufferLen (0), expected_host(hostname)
 	{
 		/* cache options */
 		i2p::config::GetOption("http.auth", needAuth);

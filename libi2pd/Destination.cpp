@@ -213,7 +213,7 @@ namespace client
 		return pool->Reconfigure(inLen, outLen, inQuant, outQuant);
 	}
 	
-	std::shared_ptr<const i2p::data::LeaseSet> LeaseSetDestination::FindLeaseSet (const i2p::data::IdentHash& ident)
+	std::shared_ptr<i2p::data::LeaseSet> LeaseSetDestination::FindLeaseSet (const i2p::data::IdentHash& ident)
 	{
 		std::shared_ptr<i2p::data::LeaseSet> remoteLS;
 		{
@@ -272,15 +272,21 @@ namespace client
 		if (!m_Pool) return nullptr;
 		if (!m_LeaseSet)
 			UpdateLeaseSet ();
+		auto ls = GetLeaseSetMt ();
+		return (ls && ls->GetInnerLeaseSet ()) ? ls->GetInnerLeaseSet () : ls; // always non-encrypted
+	}
+
+	std::shared_ptr<const i2p::data::LocalLeaseSet> LeaseSetDestination::GetLeaseSetMt ()
+	{
 		std::lock_guard<std::mutex> l(m_LeaseSetMutex);
 		return m_LeaseSet;
 	}
-
-	void LeaseSetDestination::SetLeaseSet (i2p::data::LocalLeaseSet * newLeaseSet)
+		
+	void LeaseSetDestination::SetLeaseSet (std::shared_ptr<const i2p::data::LocalLeaseSet> newLeaseSet)
 	{
 		{
 			std::lock_guard<std::mutex> l(m_LeaseSetMutex);
-			m_LeaseSet.reset (newLeaseSet);
+			m_LeaseSet = newLeaseSet;
 		}
 		i2p::garlic::GarlicDestination::SetLeaseSetUpdated ();
 		if (m_IsPublic)
@@ -361,55 +367,76 @@ namespace client
 		}
 		i2p::data::IdentHash key (buf + DATABASE_STORE_KEY_OFFSET);
 		std::shared_ptr<i2p::data::LeaseSet> leaseSet;
-		if (buf[DATABASE_STORE_TYPE_OFFSET] == i2p::data::NETDB_STORE_TYPE_LEASESET || // 1
-			buf[DATABASE_STORE_TYPE_OFFSET] == i2p::data::NETDB_STORE_TYPE_STANDARD_LEASESET2) // 3
+		switch (buf[DATABASE_STORE_TYPE_OFFSET])
 		{
-			LogPrint (eLogDebug, "Destination: Remote LeaseSet");
-			std::lock_guard<std::mutex> lock(m_RemoteLeaseSetsMutex);
-			auto it = m_RemoteLeaseSets.find (key);
-			if (it != m_RemoteLeaseSets.end ())
+			case i2p::data::NETDB_STORE_TYPE_LEASESET: // 1
+			case i2p::data::NETDB_STORE_TYPE_STANDARD_LEASESET2: // 3
 			{
-				leaseSet = it->second;
-				if (leaseSet->IsNewer (buf + offset, len - offset))
+				LogPrint (eLogDebug, "Destination: Remote LeaseSet");
+				std::lock_guard<std::mutex> lock(m_RemoteLeaseSetsMutex);
+				auto it = m_RemoteLeaseSets.find (key);
+				if (it != m_RemoteLeaseSets.end ())
 				{
-					leaseSet->Update (buf + offset, len - offset);
+					leaseSet = it->second;
+					if (leaseSet->IsNewer (buf + offset, len - offset))
+					{
+						leaseSet->Update (buf + offset, len - offset);
+						if (leaseSet->IsValid () && leaseSet->GetIdentHash () == key)
+							LogPrint (eLogDebug, "Destination: Remote LeaseSet updated");
+						else
+						{
+							LogPrint (eLogDebug, "Destination: Remote LeaseSet update failed");
+							m_RemoteLeaseSets.erase (it);
+							leaseSet = nullptr;
+						}
+					}
+					else
+						LogPrint (eLogDebug, "Destination: Remote LeaseSet is older. Not updated");
+				}
+				else
+				{
+					if (buf[DATABASE_STORE_TYPE_OFFSET] == i2p::data::NETDB_STORE_TYPE_LEASESET)
+						leaseSet = std::make_shared<i2p::data::LeaseSet> (buf + offset, len - offset); // LeaseSet
+					else
+						leaseSet = std::make_shared<i2p::data::LeaseSet2> (buf[DATABASE_STORE_TYPE_OFFSET], buf + offset, len - offset); // LeaseSet2
 					if (leaseSet->IsValid () && leaseSet->GetIdentHash () == key)
-						LogPrint (eLogDebug, "Destination: Remote LeaseSet updated");
+					{
+						if (leaseSet->GetIdentHash () != GetIdentHash ())
+						{
+							LogPrint (eLogDebug, "Destination: New remote LeaseSet added");
+							m_RemoteLeaseSets[key] = leaseSet;
+						}
+						else
+							LogPrint (eLogDebug, "Destination: Own remote LeaseSet dropped");
+					}
 					else
 					{
-						LogPrint (eLogDebug, "Destination: Remote LeaseSet update failed");
-						m_RemoteLeaseSets.erase (it);
+						LogPrint (eLogError, "Destination: New remote LeaseSet failed");
 						leaseSet = nullptr;
 					}
 				}
-				else
-					LogPrint (eLogDebug, "Destination: Remote LeaseSet is older. Not updated");
+				break;
 			}
-			else
+			case i2p::data::NETDB_STORE_TYPE_ENCRYPTED_LEASESET2: // 5
 			{
-				if (buf[DATABASE_STORE_TYPE_OFFSET] == i2p::data::NETDB_STORE_TYPE_LEASESET)
-					leaseSet = std::make_shared<i2p::data::LeaseSet> (buf + offset, len - offset); // LeaseSet
-				else
-					leaseSet = std::make_shared<i2p::data::LeaseSet2> (buf[DATABASE_STORE_TYPE_OFFSET], buf + offset, len - offset); // LeaseSet2
-				if (leaseSet->IsValid () && leaseSet->GetIdentHash () == key)
+				auto it2 = m_LeaseSetRequests.find (key);
+				if (it2 != m_LeaseSetRequests.end () && it2->second->requestedBlindedKey)
 				{
-					if (leaseSet->GetIdentHash () != GetIdentHash ())
+					auto ls2 = std::make_shared<i2p::data::LeaseSet2> (buf + offset, len - offset, it2->second->requestedBlindedKey);
+					if (ls2->IsValid ())
 					{
-						LogPrint (eLogDebug, "Destination: New remote LeaseSet added");
-						m_RemoteLeaseSets[key] = leaseSet;
+						m_RemoteLeaseSets[ls2->GetIdentHash ()] = ls2; // ident is not key
+						m_RemoteLeaseSets[key] = ls2; // also store as key for next lookup
+						leaseSet = ls2;
 					}
-					else
-						LogPrint (eLogDebug, "Destination: Own remote LeaseSet dropped");
 				}
 				else
-				{
-					LogPrint (eLogError, "Destination: New remote LeaseSet failed");
-					leaseSet = nullptr;
-				}
+					LogPrint (eLogInfo, "Destination: Couldn't find request for encrypted LeaseSet2");
+				break;
 			}
+			default:
+				LogPrint (eLogError, "Destination: Unexpected client's DatabaseStore type ", buf[DATABASE_STORE_TYPE_OFFSET], ", dropped");
 		}
-		else
-			LogPrint (eLogError, "Destination: Unexpected client's DatabaseStore type ", buf[DATABASE_STORE_TYPE_OFFSET], ", dropped");
 
 		auto it1 = m_LeaseSetRequests.find (key);
 		if (it1 != m_LeaseSetRequests.end ())
@@ -485,7 +512,8 @@ namespace client
 
 	void LeaseSetDestination::Publish ()
 	{
-		if (!m_LeaseSet || !m_Pool)
+		auto leaseSet = GetLeaseSetMt ();
+		if (!leaseSet || !m_Pool)
 		{
 			LogPrint (eLogError, "Destination: Can't publish non-existing LeaseSet");
 			return;
@@ -517,7 +545,7 @@ namespace client
 			LogPrint (eLogError, "Destination: Can't publish LeaseSet. No inbound tunnels");
 			return;
 		}
-		auto floodfill = i2p::data::netdb.GetClosestFloodfill (m_LeaseSet->GetIdentHash (), m_ExcludedFloodfills);
+		auto floodfill = i2p::data::netdb.GetClosestFloodfill (leaseSet->GetIdentHash (), m_ExcludedFloodfills);
 		if (!floodfill)
 		{
 			LogPrint (eLogError, "Destination: Can't publish LeaseSet, no more floodfills found");
@@ -527,7 +555,7 @@ namespace client
 		m_ExcludedFloodfills.insert (floodfill->GetIdentHash ());
 		LogPrint (eLogDebug, "Destination: Publish LeaseSet of ", GetIdentHash ().ToBase32 ());
 		RAND_bytes ((uint8_t *)&m_PublishReplyToken, 4);
-		auto msg = WrapMessage (floodfill, i2p::CreateDatabaseStoreMsg (m_LeaseSet, m_PublishReplyToken, inbound));
+		auto msg = WrapMessage (floodfill, i2p::CreateDatabaseStoreMsg (leaseSet, m_PublishReplyToken, inbound));
 		m_PublishConfirmationTimer.expires_from_now (boost::posix_time::seconds(PUBLISH_CONFIRMATION_TIMEOUT));
 		m_PublishConfirmationTimer.async_wait (std::bind (&LeaseSetDestination::HandlePublishConfirmationTimer,
 			shared_from_this (), std::placeholders::_1));
@@ -550,7 +578,7 @@ namespace client
 				else
 				{
 					LogPrint (eLogWarning, "Destination: Publish confirmation was not received in ", PUBLISH_CONFIRMATION_TIMEOUT,  " seconds from Java floodfill for crypto type ", (int)GetIdentity ()->GetCryptoKeyType ());
-					// Java floodfill never sends confirmantion back for unknown crypto type
+					// Java floodfill never sends confirmation back for unknown crypto type
 					// assume it successive and try to verify
 					m_PublishVerificationTimer.expires_from_now (boost::posix_time::seconds(PUBLISH_VERIFICATION_TIMEOUT));
 					m_PublishVerificationTimer.async_wait (std::bind (&LeaseSetDestination::HandlePublishVerificationTimer,
@@ -565,26 +593,32 @@ namespace client
 	{
 		if (ecode != boost::asio::error::operation_aborted)
 		{
+			auto ls = GetLeaseSetMt ();
+			if (!ls)
+			{
+				LogPrint (eLogWarning, "Destination: couldn't verify LeaseSet for ", GetIdentHash().ToBase32());
+				return;
+			}	
 			auto s = shared_from_this ();
-			RequestLeaseSet (GetIdentHash (),
-				// "this" added due to bug in gcc 4.7-4.8
-				[s,this](std::shared_ptr<i2p::data::LeaseSet> leaseSet)
+			// we must capture this for gcc 4.7 due the bug
+			RequestLeaseSet (ls->GetStoreHash (),
+				[s, ls, this](std::shared_ptr<const i2p::data::LeaseSet> leaseSet)
 				{
 					if (leaseSet)
 					{
-						if (s->m_LeaseSet && *s->m_LeaseSet == *leaseSet)
+						if (*ls == *leaseSet)
 						{
 							// we got latest LeasetSet
-							LogPrint (eLogDebug, "Destination: published LeaseSet verified for ", GetIdentHash().ToBase32());
+							LogPrint (eLogDebug, "Destination: published LeaseSet verified for ", s->GetIdentHash().ToBase32());
 							s->m_PublishVerificationTimer.expires_from_now (boost::posix_time::seconds(PUBLISH_REGULAR_VERIFICATION_INTERNAL));
 							s->m_PublishVerificationTimer.async_wait (std::bind (&LeaseSetDestination::HandlePublishVerificationTimer, s, std::placeholders::_1));
 							return;
 						}
 						else
-							LogPrint (eLogDebug, "Destination: LeaseSet is different than just published for ", GetIdentHash().ToBase32());
+							LogPrint (eLogDebug, "Destination: LeaseSet is different than just published for ", s->GetIdentHash().ToBase32());
 					}
 					else
-						LogPrint (eLogWarning, "Destination: couldn't find published LeaseSet for ", GetIdentHash().ToBase32());
+						LogPrint (eLogWarning, "Destination: couldn't find published LeaseSet for ", s->GetIdentHash().ToBase32());
 					// we have to publish again
 					s->Publish ();
 				});
@@ -605,7 +639,27 @@ namespace client
 				m_Service.post ([requestComplete](void){requestComplete (nullptr);});
 			return false;
 		}
-		m_Service.post (std::bind (&LeaseSetDestination::RequestLeaseSet, shared_from_this (), dest, requestComplete));
+		m_Service.post (std::bind (&LeaseSetDestination::RequestLeaseSet, shared_from_this (), dest, requestComplete, nullptr));
+		return true;
+	}
+
+	bool LeaseSetDestination::RequestDestinationWithEncryptedLeaseSet (std::shared_ptr<const i2p::data::BlindedPublicKey> dest, RequestComplete requestComplete)
+	{
+		if (!dest || !m_Pool || !IsReady ())
+		{
+			if (requestComplete)
+				m_Service.post ([requestComplete](void){requestComplete (nullptr);});
+			return false;
+		}	
+		auto storeHash = dest->GetStoreHash ();
+		auto leaseSet = FindLeaseSet (storeHash);	
+		if (leaseSet)
+		{
+			if (requestComplete)
+				m_Service.post ([requestComplete, leaseSet](void){requestComplete (leaseSet);});
+			return true;
+		}
+		m_Service.post (std::bind (&LeaseSetDestination::RequestLeaseSet, shared_from_this (), storeHash, requestComplete, dest));
 		return true;
 	}
 
@@ -624,13 +678,20 @@ namespace client
 			});
 	}
 
-	void LeaseSetDestination::RequestLeaseSet (const i2p::data::IdentHash& dest, RequestComplete requestComplete)
+	void LeaseSetDestination::CancelDestinationRequestWithEncryptedLeaseSet (std::shared_ptr<const i2p::data::BlindedPublicKey> dest, bool notify)
+	{
+		if (dest)
+			CancelDestinationRequest (dest->GetStoreHash (), notify);
+	}
+
+	void LeaseSetDestination::RequestLeaseSet (const i2p::data::IdentHash& dest, RequestComplete requestComplete, std::shared_ptr<const i2p::data::BlindedPublicKey> requestedBlindedKey)
 	{
 		std::set<i2p::data::IdentHash> excluded;
 		auto floodfill = i2p::data::netdb.GetClosestFloodfill (dest, excluded);
 		if (floodfill)
 		{
 			auto request = std::make_shared<LeaseSetRequest> (m_Service);
+			request->requestedBlindedKey = requestedBlindedKey; // for encrypted LeaseSet2
 			if (requestComplete)
 				request->requestComplete.push_back (requestComplete);
 			auto ts = i2p::util::GetSecondsSinceEpoch ();
@@ -925,7 +986,7 @@ namespace client
 		{
 			auto s = GetSharedFromThis ();
 			RequestDestination (dest,
-				[s, streamRequestComplete, port](std::shared_ptr<i2p::data::LeaseSet> ls)
+				[s, streamRequestComplete, port](std::shared_ptr<const i2p::data::LeaseSet> ls)
 				{
 					if (ls)
 						streamRequestComplete(s->CreateStream (ls, port));
@@ -933,6 +994,24 @@ namespace client
 						streamRequestComplete (nullptr);
 				});
 		}
+	}
+
+	void ClientDestination::CreateStream (StreamRequestComplete streamRequestComplete, std::shared_ptr<const i2p::data::BlindedPublicKey> dest, int port)
+	{
+		if (!streamRequestComplete)
+		{
+			LogPrint (eLogError, "Destination: request callback is not specified in CreateStream");
+			return;
+		}
+		auto s = GetSharedFromThis ();
+		RequestDestinationWithEncryptedLeaseSet (dest,
+			[s, streamRequestComplete, port](std::shared_ptr<i2p::data::LeaseSet> ls)
+			{
+				if (ls)
+					streamRequestComplete(s->CreateStream (ls, port));
+				else
+					streamRequestComplete (nullptr);
+			});
 	}
 
 	std::shared_ptr<i2p::stream::Stream> ClientDestination::CreateStream (std::shared_ptr<const i2p::data::LeaseSet> remote, int port)
@@ -1039,19 +1118,22 @@ namespace client
 
 	void ClientDestination::CreateNewLeaseSet (std::vector<std::shared_ptr<i2p::tunnel::InboundTunnel> > tunnels)
 	{
-		i2p::data::LocalLeaseSet * leaseSet = nullptr;
+		std::shared_ptr<i2p::data::LocalLeaseSet> leaseSet;
 		if (GetLeaseSetType () == i2p::data::NETDB_STORE_TYPE_LEASESET)
 		{
-			leaseSet = new i2p::data::LocalLeaseSet (GetIdentity (), m_EncryptionPublicKey, tunnels);
+			leaseSet = std::make_shared<i2p::data::LocalLeaseSet> (GetIdentity (), m_EncryptionPublicKey, tunnels);
 			// sign
 			Sign (leaseSet->GetBuffer (), leaseSet->GetBufferLen () - leaseSet->GetSignatureLen (), leaseSet->GetSignature ()); 
 		}
 		else
 		{
-			// standard LS2 (type 3) assumed for now. TODO: implement others
+			// standard LS2 (type 3) first
 			auto keyLen = m_Decryptor ? m_Decryptor->GetPublicKeyLen () : 256;
-			leaseSet = new i2p::data::LocalLeaseSet2 (i2p::data::NETDB_STORE_TYPE_STANDARD_LEASESET2,
+			auto ls2 = std::make_shared<i2p::data::LocalLeaseSet2> (i2p::data::NETDB_STORE_TYPE_STANDARD_LEASESET2,
 				m_Keys, m_EncryptionKeyType, keyLen, m_EncryptionPublicKey, tunnels);
+			if (GetLeaseSetType () == i2p::data::NETDB_STORE_TYPE_ENCRYPTED_LEASESET2) // encrypt if type 5
+				ls2 = std::make_shared<i2p::data::LocalEncryptedLeaseSet2> (ls2, m_Keys);
+			leaseSet = ls2;
 		}
 		SetLeaseSet (leaseSet);
 	}

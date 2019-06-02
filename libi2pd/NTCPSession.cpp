@@ -843,6 +843,7 @@ namespace transport
 							{
 								m_NTCPV6Acceptor->open (boost::asio::ip::tcp::v6());
 								m_NTCPV6Acceptor->set_option (boost::asio::ip::v6_only (true));
+								m_NTCPV6Acceptor->set_option (boost::asio::socket_base::reuse_address (true));
 								m_NTCPV6Acceptor->bind (boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), address->port));
 								m_NTCPV6Acceptor->listen ();
 
@@ -1078,8 +1079,6 @@ namespace transport
 		else
 		{
 			LogPrint (eLogDebug, "NTCP: Connected to ", conn->GetSocket ().remote_endpoint ());
-			if (conn->GetSocket ().local_endpoint ().protocol () == boost::asio::ip::tcp::v6()) // ipv6
-				context.UpdateNTCPV6Address (conn->GetSocket ().local_endpoint ().address ());
 			conn->ClientLogin ();
 		}
 	}
@@ -1286,7 +1285,7 @@ namespace transport
 				if (it.second->IsTerminationTimeoutExpired (ts))
 				{
 					auto session = it.second;
-					// Termniate modifies m_NTCPSession, so we postpone it
+					// Terminate modifies m_NTCPSession, so we postpone it
 					m_Service.post ([session] {
 							LogPrint (eLogDebug, "NTCP: No activity for ", session->GetTerminationTimeout (), " seconds");
 							session->Terminate ();

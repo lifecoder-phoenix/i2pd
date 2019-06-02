@@ -1,6 +1,42 @@
 # for this file format description,
 # see https://github.com/olivierlacan/keep-a-changelog
 
+## [2.25.0] - 2019-05-09
+### Added
+- Create, publish and handle encrypted LeaseSet2
+- Support of b33 addresses 
+- RedDSA key blinding
+- .b32.i2p addresses in jump links
+- ntcp2.addressv6 parameter
+### Changed
+- Allow HTTP headers without value
+- Set data directory from external storage path for Android
+- addresshelper support is configurable per tunnel
+- gradlew script for android build
+### Fixed
+- Deletion of expired encrypted LeaseSet2 on floodfills
+- ipv6 fallback address
+- SSU incoming packets routing
+
+## [2.24.0] - 2019-03-21
+### Added
+- Support of transient keys for LeaseSet2
+- Support of encrypted LeaseSet2
+- Recognize signature type 11 (RedDSA)
+- Support websocket connections over HTTP proxy
+- Ability to disable full addressbook persist
+### Changed
+- Don't load peer profiles if non-persistant
+- REUSE_ADDR for ipv6 acceptors
+- Reset eTags if addressbook can't be loaded
+### Fixed
+- Build with boost 1.70
+- Filter out unspecified addresses from RouterInfo
+- Check floodfill status change
+- Correct SAM response for invalid key
+- SAM crash on termination for Windows
+- Race condition for publishing
+ 
 ## [2.23.0] - 2019-01-21
 ### Added
 - Standard LeaseSet2 support
